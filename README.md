@@ -7,11 +7,21 @@ from pathlib import Path
 URL = "https://www.bcu.gub.uy/Estadisticas-e-Indicadores/Paginas/Cotizaciones.aspx"
 
 def fetch_cotizaciones(from_date: str, to_date: str, url: str = URL) -> str:
-    """Fetch page content with a date range."""
+    """Fetch page content with a date range.
+
+    Tries with certifi bundle first; on SSL failure, retries without
+    certificate verification as a fallback.
+    """
     params = {"FecDesde": from_date, "FecHasta": to_date}
-    response = requests.get(url, params=params, verify=certifi.where(), timeout=10)
-    response.raise_for_status()
-    return response.text
+    try:
+        response = requests.get(url, params=params, verify=certifi.where(), timeout=10)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.SSLError:
+        print("Advertencia: error SSL, intentando sin verificación de certificado...")
+        response = requests.get(url, params=params, verify=False, timeout=10)
+        response.raise_for_status()
+        return response.text
 
 def parse_cotizaciones(html: str) -> pd.DataFrame:
     """Parse cotizaciones for USD and Euro from HTML."""
@@ -28,17 +38,20 @@ def parse_cotizaciones(html: str) -> pd.DataFrame:
                     compra = cols[2].text.strip()
                     venta = cols[3].text.strip()
                     if moneda in ["DLS. USA BILLETE", "EURO"]:
-                        cotizaciones.append(
-                            {"Moneda": moneda, "Fecha": fecha, "Compra": compra, "Venta": venta}
-                        )
+                        cotizaciones.append({
+                            "Moneda": moneda,
+                            "Fecha": fecha,
+                            "Compra": compra,
+                            "Venta": venta,
+                        })
     return pd.DataFrame(cotizaciones)
 
 def save_excel(df: pd.DataFrame, path: str) -> None:
-    """Save DataFrame to Excel, handling permission errors."""
+    """Save DataFrame to Excel handling PermissionError."""
     try:
         df.to_excel(path, index=False)
     except PermissionError:
-        print(f"No se pudo escribir en {path}. ¿Está abierto?")
+        print(f"No se pudo escribir en {path}. ¿Está abierto? Guardando como temporal...")
         tmp = Path(path).with_suffix(".tmp.xlsx")
         df.to_excel(tmp, index=False)
         print(f"Archivo guardado como {tmp}")
